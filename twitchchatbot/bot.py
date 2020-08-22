@@ -11,7 +11,7 @@ CONFIG_PATH = "config.ini"
 LOG = logging.getLogger("Bot")
 
 class Bot:
-    COMMANDS = ["echo"]
+    COMMANDS = ["echo", "join", "setemote", "stop"]
     NAME = "Bot"
     VERSION = "0.1.0"
 
@@ -28,13 +28,13 @@ class Bot:
         self._load_config()
         self.is_running = self.chat.is_ready and self.is_ready
 
-    def process_message(self, username, message):
+    def process_message(self, username, chan, message):
         clean_message = message.strip()
-        if message[0] == self.var.PREFIX:
+        if message[0] == self.var.prefix:
             split_message = clean_message.split(" ")
             if split_message[0][1 :] in self.COMMANDS:
                 LOG.info("Command recognized.")
-                self._execute_command(split_message, username)
+                self._execute_command(username, chan, split_message)
                 time.sleep(1)
 
     def run(self):
@@ -54,23 +54,28 @@ class Bot:
             self.chat.scanloop()
 
     def is_admin(self, username):
-        return username in self.var.ADMINS
+        return username in self.var.admins
 
     @property
     def is_ready(self):
         return self.is_loaded
 
-    def _execute_command(self, split_message, username):
+    def _execute_command(self, username, channel, split_message):
         command = split_message[0][1 :]
         # ADMIN ONLY COMMANDS
         if self.is_admin(username):
             if command == "echo":
-                self._send_msg(" ".join(split_message[1 :]))
+                self._send_msg(" ".join(split_message[1 :]), channel)
+            elif command == "join":
+                try:
+                    self.chat.connect(f"#{split_message[1]}", split_message[2])
+                except IndexError:
+                    self.chat.connect(f"#{split_message[1]}")
+            elif command == "setemote":
+                self.chat.set_emote(channel, split_message[1])
+                self._send_msg("Emote updated!", channel)
             elif command == "stop":
                 self._stop()
-            elif command == "loadconfig":
-                self._load_config()
-                self._send_msg("Config reloaded.")
 
     def _load_config(self):
         if not os.path.exists(CONFIG_PATH):
@@ -82,8 +87,8 @@ class Bot:
         self._set_variables(config)
         LOG.info("Config loaded.")
 
-    def _send_msg(self, msg):
-        self.chat.send_msg(f"{self.var.RP} {msg}")
+    def _send_msg(self, message, channel=None):
+        self.chat.send_msg(channel, message)
 
     def _set_variables(self, config):
         try:
@@ -95,11 +100,10 @@ class Bot:
             self.is_loaded = False
 
     def _set_admin_variables(self, config):
-        self.var.ADMINS = config["admins"].split(",")
+        self.var.admins = config["admins"].split(",")
 
     def _set_bot_variables(self, config):
-        self.var.PREFIX = config["prefix"]
-        self.var.RP = config["rp"]
+        self.var.prefix = config["prefix"]
 
     def _stop(self):
         self.is_running = False

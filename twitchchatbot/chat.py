@@ -1,9 +1,14 @@
+import collections
 import logging
 import re
 import socket
 import time
+import types
 
 LOG = logging.getLogger("Chat")
+
+Connection = collections.namedtuple("Connection", ["host", "port", "nick",
+                                                   "passwd"])
 
 class Chat:
     RATE = 120  # message rate limit
@@ -11,60 +16,84 @@ class Chat:
 
     def __init__(self, bot):
         self.bot = bot
-        self.socket = socket.socket()
-        self.HOST = None
-        self.PORT = None
-        self.NICK = None
-        self.PASS = None
-        self.CHAN = None
+        self.sockets = {}
+
+        self.channel = None
+        self.conn = None
+        self.emote = None
         self.is_loaded = False
 
-    def connect(self):
-        self.socket.connect((self.HOST, self.PORT))
-        self.socket.send(f"PASS {self.PASS}\r\n".encode("utf-8"))
-        self.socket.send(f"NICK {self.NICK}\r\n".encode("utf-8"))
-        self.socket.send(f"JOIN {self.CHAN}\r\n".encode("utf-8"))
-        time.sleep(1)
-        self.socket.setblocking(0)
+    def connect(self, channel=None, emote=None):
+        if channel is None:
+            self.sockets[self.channel] = types.SimpleNamespace(
+                sock=socket.socket(), emote=self.emote)
+            self._connect(self.sockets[self.channel].sock, self.channel)
+        else:
+            self.sockets[channel] = types.SimpleNamespace(
+                sock=socket.socket(),
+                emote=self.emote if emote is None else emote)
+            self._connect(self.sockets[channel].sock, channel)
+            LOG.debug(channel)
 
     def scanloop(self):
+        """Loops through all the sockets we have and scan for response
+        while respecting the rate limit
+        """
+        for chan in list(self.sockets):
+            self._scan(chan)
+
+    def send_msg(self, channel, message):
+        if channel is None:
+            channel = self.channel
+        self.sockets[channel].sock.send(
+            ":{0}!{0}@{0}.tmi.twitch.tv PRIVMSG {1} : {2}\r\n".format(
+                self.conn.nick, channel,
+                f"{self.sockets[channel].emote} {message}").encode("utf-8"))
+
+    def set_config(self, config):
         try:
-            response = self.socket.recv(1024).decode("utf-8")
+            self.conn = Connection(config["host"], int(config["port"]),
+                                   config["nick"], config["pass"])
+            self.channel = config["chan"]
+            self.emote = config["emote"]
+            self.is_loaded = True
+        except (KeyError, ValueError):
+            LOG.error("Config not loaded! Check config file and reboot bot.")
+            self.is_loaded = False
+
+    def set_emote(self, channel, emote):
+        self.sockets[channel].emote = emote
+
+    def is_bot(self, username):
+        return username.lower() == self.conn.nick.lower()
+
+    @property
+    def is_ready(self):
+        return self.is_loaded
+
+    def _connect(self, sock, chan):
+        sock.connect((self.conn.host, self.conn.port))
+        sock.send(f"PASS {self.conn.passwd}\r\n".encode("utf-8"))
+        sock.send(f"NICK {self.conn.nick}\r\n".encode("utf-8"))
+        sock.send(f"JOIN {chan}\r\n".encode("utf-8"))
+        time.sleep(1)
+        sock.setblocking(0)
+
+    def _scan(self, channel):
+        try:
+            response = self.sockets[channel].sock.recv(1024).decode("utf-8")
             if response == "PING :tmi.twitch.tv\r\n":
-                self.socket.send("PONG :tmi.twitch.tv\r\n".encode("utf-8"))
+                self.sockets[channel].sock.send("PONG :tmi.twitch.tv"
+                                                "\r\n".encode("utf-8"))
                 LOG.info("Pong sent")
                 return
             username = re.search(r"\w+", response).group(0)
             if self.is_bot(username):
                 return
             message = self.CHAT_MSG.sub("", response)
-            LOG.info("USER: %s : %s", username, message)
-            self.bot.process_message(username, message)
+            LOG.info("USER: %s%s : %s", username, channel, message)
+            self.bot.process_message(username, channel, message)
         except (BlockingIOError, AttributeError, UnicodeDecodeError):
             pass
         finally:
             time.sleep(1 / self.RATE)
-
-    def send_msg(self, msg):
-        self.socket.send(
-            ":{0}!{0}@{0}.tmi.twitch.tv PRIVMSG {1} : {2}\r\n".format(
-                self.NICK, self.CHAN, msg).encode("utf-8"))
-
-    def set_config(self, config):
-        try:
-            self.HOST = config["host"]
-            self.PORT = int(config["port"])
-            self.NICK = config["nick"]
-            self.PASS = config["pass"]
-            self.CHAN = config["chan"]
-            self.is_loaded = True
-        except (KeyError, ValueError):
-            LOG.error("Config not loaded! Check config file and reboot bot.")
-            self.is_loaded = False
-
-    def is_bot(self, username):
-        return username.lower() == self.NICK.lower()
-
-    @property
-    def is_ready(self):
-        return self.is_loaded
