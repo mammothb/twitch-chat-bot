@@ -1,3 +1,4 @@
+import asyncio
 import configparser
 import errno
 import logging
@@ -6,12 +7,13 @@ import time
 import types
 
 from twitchchatbot.chat import Chat
+from twitchchatbot.plugins import search
 
 CONFIG_PATH = "config.ini"
 LOG = logging.getLogger("Bot")
 
 class Bot:
-    COMMANDS = ["echo", "join", "setemote", "stop"]
+    COMMANDS = ["echo", "join", "search", "setemote", "stop"]
     NAME = "Bot"
     VERSION = "0.1.0"
 
@@ -71,6 +73,9 @@ class Bot:
                     self.chat.connect(f"#{split_message[1]}", split_message[2])
                 except IndexError:
                     self.chat.connect(f"#{split_message[1]}")
+            elif command == "search":
+                self._send_msg(search.googleimg(" ".join(split_message[1 :])),
+                               channel)
             elif command == "setemote":
                 self.chat.set_emote(channel, split_message[1])
                 self._send_msg("Emote updated!", channel)
