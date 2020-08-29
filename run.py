@@ -7,6 +7,7 @@ from twitchchatbot.bot import Bot
 FORMAT = '%(asctime)-15s %(levelname)7s %(name)7s: %(message)s'
 logging.basicConfig(format=FORMAT, level=logging.INFO)
 # logging.basicConfig(format=FORMAT, level=logging.DEBUG)
+logging.getLogger("apscheduler.executors.default").setLevel(logging.WARNING)
 
 CONFIG_PATH = os.path.join(os.path.dirname(__file__), "config.ini")
 

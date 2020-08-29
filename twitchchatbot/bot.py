@@ -108,11 +108,10 @@ class Bot:
 
         msg_lower = message.lower()
         if msg_lower[0] == self.prefix:
-            msg_lower_parts = msg_lower.split(" ")
-            trigger = msg_lower_parts[0][1 :]
+            trigger = msg_lower.split(" ")[0][1 :]
             msg_raw_parts = message.split(" ")
             remaining_message = (" ".join(msg_raw_parts[1 :])
-                                 if len(msg_raw_parts) > 1 else None)
+                                 if len(msg_raw_parts) > 1 else "")
             if trigger in self.COMMANDS:
                 self._execute_command(trigger, remaining_message, event)
 
