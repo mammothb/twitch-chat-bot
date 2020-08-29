@@ -1,114 +1,147 @@
-import asyncio
-import configparser
-import errno
 import logging
-import os.path
-import time
-import types
+import sys
 
-from twitchchatbot.chat import Chat
+import irc.client
+
+from twitchchatbot.constants import NAME, VERSION
+from twitchchatbot.eventloop import SafeDefaultScheduler
+from twitchchatbot.managers.handler import HandlerManager
+from twitchchatbot.managers.irc import Irc
+from twitchchatbot.managers.schedule import ScheduleManager
 from twitchchatbot.plugins import search
 
-CONFIG_PATH = "config.ini"
 LOG = logging.getLogger("Bot")
 
 class Bot:
-    COMMANDS = ["echo", "join", "search", "setemote", "stop"]
-    NAME = "Bot"
-    VERSION = "0.1.0"
+    COMMANDS = ["echo", "join", "search", "stop"]
 
-    def __init__(self):
+    def __init__(self, config):
         LOG.info("Bot starting...")
-        self.is_loaded = False
-        self.is_running = False
-        self.chat = Chat(self)
-        self.var = types.SimpleNamespace()
+        self.config = config
 
-    def prepare(self):
-        """Load config and perform ready checks
+        ScheduleManager.init()
+
+        self.privmsg_per_30 = 90
+        self.phrases = {
+            "welcome": ["{nickname} {version} running! peepoChag"],
+            "quit": ["{nickname} {version} shutting down... peepoKEKWait"],
+        }
+        self.welcome_messages_sent = False
+
+        self.admins = self.config["Bot"]["admins"].split(",")
+        self.channel = f"#{self.config['Bot']['channel']}"
+        self.nickname = self.config["Bot"]["nickname"]
+        self.password = self.config["Bot"]["password"]
+        self.prefix = self.config["Bot"]["prefix"]
+
+        LOG.debug("Config loaded.")
+
+        self.reactor = irc.client.Reactor()
+        # SafeDefaultScheduler makes the bot not exit on exception in
+        # the main thread, e.g., on actions via bot.execute_now, etc.
+        self.reactor.scheduler_class = SafeDefaultScheduler
+        self.reactor.scheduler = SafeDefaultScheduler()
+
+        HandlerManager.init_handlers()
+
+        self.irc = Irc(self)
+        self.is_running = True
+
+    def connect(self):
+        self.irc.start()
+
+    def start(self):
+        """Start the IRC client."""
+        self.reactor.process_forever()
+
+    def quit_bot(self):
+        HandlerManager.trigger("on_quit")
+        phrase_data = {"nickname": NAME, "version": VERSION}
+
+        try:
+            ScheduleManager.base_scheduler.print_jobs()
+            ScheduleManager.base_scheduler.shutdown(wait=False)
+        except Exception:
+            LOG.exception("Error while shutting down the apscheduler")
+
+        try:
+            for p in self.phrases["quit"]:
+                self.privmsg(p.format(**phrase_data))
+        except Exception:
+            LOG.exception("Exception caught while trying to say quit phrase")
+
+        sys.exit(0)
+
+    def privmsg(self, message, channel=None):
+        if channel is None:
+            channel = self.channel
+
+        self.irc.privmsg(channel, message)
+
+    def on_pubmsg(self, _chatconn, event):
+        if self.is_bot(event.source.user):
+            return False
+
+        res = HandlerManager.trigger("on_pubmsg", message=event.arguments[0])
+        if res is False:
+            return False
+
+        self.parse_message(event.arguments[0], event)
+
+    def on_welcome(self, _conn, _event):
+        """Gets triggered on IRC welcome, i.e. when the login is
+        successful.
         """
-        self._load_config()
-        self.is_running = self.chat.is_ready and self.is_ready
+        if self.welcome_messages_sent:
+            return
 
-    def process_message(self, username, chan, message):
-        clean_message = message.strip()
-        if message[0] == self.var.prefix:
-            split_message = clean_message.split(" ")
-            if split_message[0][1 :] in self.COMMANDS:
-                LOG.info("Command recognized.")
-                self._execute_command(username, chan, split_message)
-                time.sleep(1)
+        for p in self.phrases["welcome"]:
+            self.privmsg(p.format(nickname=NAME, version=VERSION))
 
-    def run(self):
-        if self.is_running:
-            try:
-                self.chat.connect()
-                self._send_msg("")
-                LOG.info("%s v%s loaded.", self.NAME, self.VERSION)
-            except (OSError,):
-                LOG.error("Connection failed. Check config file and reboot "
-                          "bot.")
-                self.is_running = False
-        else:
-            LOG.error("Bot NOT running! Check the errors and reboot bot.")
+        self.welcome_messages_sent = True
 
-        while self.is_running:
-            self.chat.scanloop()
+    def parse_message(self, message, event):
+        res = HandlerManager.trigger("on_message", message=message,
+                                     event=event)
+        if res is False:
+            return False
+
+        msg_lower = message.lower()
+        if msg_lower[0] == self.prefix:
+            msg_lower_parts = msg_lower.split(" ")
+            trigger = msg_lower_parts[0][1 :]
+            msg_raw_parts = message.split(" ")
+            remaining_message = (" ".join(msg_raw_parts[1 :])
+                                 if len(msg_raw_parts) > 1 else None)
+            if trigger in self.COMMANDS:
+                self._execute_command(trigger, remaining_message, event)
 
     def is_admin(self, username):
-        return username in self.var.admins
+        return username in self.admins
 
-    @property
-    def is_ready(self):
-        return self.is_loaded
+    def is_bot(self, username):
+        return username.lower() == self.nickname.lower()
 
-    def _execute_command(self, username, channel, split_message):
-        command = split_message[0][1 :]
+    def execute_delayed(self, delay, function, *args, **kwargs):
+        self.reactor.scheduler.execute_after(
+            delay, lambda: function(*args, **kwargs))
+
+    def execute_every(self, period, function, *args, **kwargs):
+        self.reactor.scheduler.execute_every(
+            period, lambda: function(*args, **kwargs))
+
+    def execute_now(self, function, *args, **kwargs):
+        self.execute_delayed(0, function, *args, **kwargs)
+
+    def _execute_command(self, command, remaining_message, event):
         # ADMIN ONLY COMMANDS
-        if self.is_admin(username):
+        if self.is_admin(event.source.user):
             if command == "echo":
-                self._send_msg(" ".join(split_message[1 :]), channel)
+                self.privmsg(remaining_message, event.target)
             elif command == "join":
-                try:
-                    self.chat.connect(f"#{split_message[1]}", split_message[2])
-                except IndexError:
-                    self.chat.connect(f"#{split_message[1]}")
+                self.irc.join(f"#{remaining_message.split(' ')[0]}")
             elif command == "search":
-                self._send_msg(search.googleimg(" ".join(split_message[1 :])),
-                               channel)
-            elif command == "setemote":
-                self.chat.set_emote(channel, split_message[1])
-                self._send_msg("Emote updated!", channel)
+                self.privmsg(search.googleimg(remaining_message),
+                             event.target)
             elif command == "stop":
-                self._stop()
-
-    def _load_config(self):
-        if not os.path.exists(CONFIG_PATH):
-            raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT),
-                                    CONFIG_PATH)
-        config = configparser.ConfigParser()
-        config.read(CONFIG_PATH)
-        self.chat.set_config(config["Chat"])
-        self._set_variables(config)
-        LOG.info("Config loaded.")
-
-    def _send_msg(self, message, channel=None):
-        self.chat.send_msg(channel, message)
-
-    def _set_variables(self, config):
-        try:
-            self._set_bot_variables(config["Bot"])
-            self._set_admin_variables(config["Admin"])
-            self.is_loaded = True
-        except (KeyError, ValueError):
-            LOG.error("Config not loaded! Check config file and reboot bot.")
-            self.is_loaded = False
-
-    def _set_admin_variables(self, config):
-        self.var.admins = config["admins"].split(",")
-
-    def _set_bot_variables(self, config):
-        self.var.prefix = config["prefix"]
-
-    def _stop(self):
-        self.is_running = False
+                self.quit_bot()
