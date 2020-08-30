@@ -47,6 +47,17 @@ class Command:
         return f"Command(!{self.command})"
 
     @classmethod
+    def raw_command(cls, cb, **options):
+        cmd = cls(**options)
+        try:
+            cmd.action = RawFuncAction(cb)
+        except Exception:
+            LOG.exception("Uncaught exception in Command.raw_command. catch "
+                          "the following exception manually!")
+            cmd.enabled = False
+        return cmd
+
+    @classmethod
     def bot_command(cls, bot, method_name, **options):
         cmd = cls(**options)
         cmd.description = options.get("description", None)

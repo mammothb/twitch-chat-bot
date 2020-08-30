@@ -10,7 +10,9 @@ from twitchchatbot.managers.command import CommandManager
 from twitchchatbot.managers.handler import HandlerManager
 from twitchchatbot.managers.irc import Irc
 from twitchchatbot.managers.schedule import ScheduleManager
+from twitchchatbot.models.plugin import PluginManager
 from twitchchatbot.plugins import search
+from twitchchatbot.utils import clean_up_message
 
 LOG = logging.getLogger("Bot")
 
@@ -47,8 +49,17 @@ class Bot:
 
         HandlerManager.init_handlers()
 
-        self.commands = CommandManager(plugin_manager=None, bot=self).load()
+        self.plugin_manager = PluginManager(bot=self).load()
+        self.commands = CommandManager(plugin_manager=self.plugin_manager,
+                                       bot=self).load()
         HandlerManager.trigger("on_managers_loaded")
+
+        # silent mode
+        self.silent = ("Flags" in config
+                       and "silent" in config["Flags"]
+                       and config["Flags"]["silent"] == "1")
+        if self.silent:
+            LOG.info("Silent mode enabled")
 
         self.irc = Irc(self)
         self.is_running = True
@@ -97,6 +108,21 @@ class Bot:
             LOG.exception("Exception caught while trying to say quit phrase")
 
         sys.exit(0)
+
+    def me(self, message, channel=None):
+        print(message)
+        self.say("/me " + message[: 500], channel=channel)
+
+    def say(self, message, channel=None):
+        if message is None:
+            LOG.warning("message=None passed to Bot::say()")
+            return
+
+        if self.silent:
+            return
+
+        message = clean_up_message(message)
+        self.privmsg(message[: 510], channel)
 
     def privmsg(self, message, channel=None):
         if channel is None:
@@ -166,8 +192,6 @@ class Bot:
     def _execute_command(self, command, remaining_message, event):
         # ADMIN ONLY COMMANDS
         if self.is_admin(event.source.user):
-            if command == "echo":
-                self.privmsg(remaining_message, event.target)
-            elif command == "search":
+            if command == "search":
                 self.privmsg(search.googleimg(remaining_message),
                              event.target)

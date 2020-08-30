@@ -1,9 +1,7 @@
-import argparse
 import logging
 from collections import UserDict
 
 from twitchchatbot.models.command import Command
-from twitchchatbot.utils import find
 
 log = logging.getLogger(__name__)
 
@@ -78,7 +76,7 @@ class CommandManager(UserDict):
             for enabled_plugin in self.plugin_manager.plugins:
                 merge_commands(enabled_plugin.commands, self.data)
 
-    def load(self, **options):
+    def load(self):
         self.load_internal_commands()
 
         self.rebuild()
