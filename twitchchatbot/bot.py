@@ -1,10 +1,12 @@
 import logging
+import random
 import sys
 
 import irc.client
 
 from twitchchatbot.constants import NAME, VERSION
 from twitchchatbot.eventloop import SafeDefaultScheduler
+from twitchchatbot.managers.command import CommandManager
 from twitchchatbot.managers.handler import HandlerManager
 from twitchchatbot.managers.irc import Irc
 from twitchchatbot.managers.schedule import ScheduleManager
@@ -12,8 +14,9 @@ from twitchchatbot.plugins import search
 
 LOG = logging.getLogger("Bot")
 
+
 class Bot:
-    COMMANDS = ["echo", "join", "search", "stop"]
+    COMMANDS = ["echo", "search"]
 
     def __init__(self, config):
         LOG.info("Bot starting...")
@@ -44,6 +47,9 @@ class Bot:
 
         HandlerManager.init_handlers()
 
+        self.commands = CommandManager(plugin_manager=None, bot=self).load()
+        HandlerManager.trigger("on_managers_loaded")
+
         self.irc = Irc(self)
         self.is_running = True
 
@@ -53,6 +59,26 @@ class Bot:
     def start(self):
         """Start the IRC client."""
         self.reactor.process_forever()
+
+    def join(self, message, **_kwargs):
+        channel = message.split(" ")[0]
+        if channel:
+            self.irc.join(f"#{channel}")
+
+    def quit(self, message, event, **_kwargs):
+        quit_delay = 0
+
+        if event.target == self.channel:
+            quit_delay_random = 60
+            try:
+                quit_delay_random = int(message.split()[0])
+            except (IndexError, ValueError, TypeError):
+                pass
+            quit_delay = random.randint(0, quit_delay_random)
+            LOG.info("%s is restarting in %d seconds.", self.nickname,
+                     quit_delay)
+
+        self.execute_delayed(quit_delay, self.quit_bot)
 
     def quit_bot(self):
         HandlerManager.trigger("on_quit")
@@ -80,11 +106,11 @@ class Bot:
 
     def on_pubmsg(self, _chatconn, event):
         if self.is_bot(event.source.user):
-            return False
+            return
 
         res = HandlerManager.trigger("on_pubmsg", message=event.arguments[0])
         if res is False:
-            return False
+            return
 
         self.parse_message(event.arguments[0], event)
 
@@ -104,7 +130,7 @@ class Bot:
         res = HandlerManager.trigger("on_message", message=message,
                                      event=event)
         if res is False:
-            return False
+            return
 
         msg_lower = message.lower()
         if msg_lower[0] == self.prefix:
@@ -114,6 +140,11 @@ class Bot:
                                  if len(msg_raw_parts) > 1 else "")
             if trigger in self.COMMANDS:
                 self._execute_command(trigger, remaining_message, event)
+            if trigger in self.commands:
+                command = self.commands[trigger]
+                extra_args = {"trigger": trigger}
+                command.run(self, remaining_message, event=event,
+                            args=extra_args)
 
     def is_admin(self, username):
         return username in self.admins
@@ -137,10 +168,6 @@ class Bot:
         if self.is_admin(event.source.user):
             if command == "echo":
                 self.privmsg(remaining_message, event.target)
-            elif command == "join":
-                self.irc.join(f"#{remaining_message.split(' ')[0]}")
             elif command == "search":
                 self.privmsg(search.googleimg(remaining_message),
                              event.target)
-            elif command == "stop":
-                self.quit_bot()

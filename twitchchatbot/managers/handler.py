@@ -5,6 +5,7 @@ from twitchchatbot.utils import find
 
 LOG = logging.getLogger("HandlerManager")
 
+
 class HandlerManager:
     handlers = {}
 
@@ -18,6 +19,9 @@ class HandlerManager:
         # on_message(source, message, emote_instances, emote_counts,
         # whisper, urls, msg_id, event)
         HandlerManager.create_handler("on_message")
+
+        # on_managers_loaded()
+        HandlerManager.create_handler("on_managers_loaded")
 
         # on_quit()
         HandlerManager.create_handler("on_quit")
@@ -54,7 +58,7 @@ class HandlerManager:
             LOG.error("remove_handler No handler for %s found.", event)
 
     @staticmethod
-    def trigger(event_name, stop_on_false=True, *args, **kwargs):
+    def trigger(event_name, *args, stop_on_false=True, **kwargs):
         if event_name not in HandlerManager.handlers:
             LOG.error("No handler set for event %s", event_name)
             return False
@@ -67,6 +71,7 @@ class HandlerManager:
                 LOG.exception("Unhandled exception from %s in %s", handler,
                               event_name)
 
+            LOG.info("%s return %s", event_name, res)
             if res is False and stop_on_false is True:
                 # Abort if handler returns false and stop_on_false is
                 # enabled

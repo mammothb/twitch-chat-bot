@@ -28,7 +28,7 @@ def googleimg(query):
         driver.get(url)
 
         # Scroll to the top edge of image results
-        driver.execute_script("window.scrollTo(0, 120)") 
+        driver.execute_script("window.scrollTo(0, 120)")
         driver.save_screenshot(img_path)
         driver.quit()
 

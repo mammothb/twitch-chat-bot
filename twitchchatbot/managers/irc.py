@@ -12,6 +12,7 @@ from twitchchatbot.managers.schedule import ScheduleManager
 
 LOG = logging.getLogger("Irc")
 
+
 class Connection(ServerConnection):
     """We override the default irc.clientServerConnection because want
     to be able to send strings that are 2048(?) bytes long. This is not
@@ -81,7 +82,7 @@ class Irc:
             # self.start() gets called again via execute_delayed)
             self.conn = None
 
-            self.bot.execute_delayed(2, lambda: self.start())
+            self.bot.execute_delayed(2, self.start)
 
     def privmsg(self, channel, message):
         if self.conn is None or not self._can_send:
@@ -99,6 +100,7 @@ class Irc:
     def join(self, channel):
         self.conn.join(channel)
         self.channels.append(channel)
+        LOG.info("Joined channel %s", channel)
 
     @property
     def _can_send(self):
@@ -117,14 +119,12 @@ class Irc:
         self.conn = Connection(self.bot.reactor)
         with self.bot.reactor.mutex:
             self.bot.reactor.connections.append(self.conn)
-        self.conn.connect(
-            "irc.chat.twitch.tv",
-            6697,
-            self.bot.nickname,
-            self.bot.password,
-            self.bot.nickname,
-            connect_factory=Factory(wrapper=ssl.wrap_socket),
-        )
+        self.conn.connect("irc.chat.twitch.tv",
+                          6697,
+                          self.bot.nickname,
+                          self.bot.password,
+                          self.bot.nickname,
+                          connect_factory=Factory(wrapper=ssl.wrap_socket))
 
         self.ping_task = ScheduleManager.execute_every(
             30, lambda: self.bot.execute_now(self._send_ping))
