@@ -20,18 +20,16 @@ class Chat:
 
         self.channel = None
         self.conn = None
-        self.emote = None
         self.is_loaded = False
 
-    def connect(self, channel=None, emote=None):
+    def connect(self, channel=None):
         if channel is None:
             self.sockets[self.channel] = types.SimpleNamespace(
-                sock=socket.socket(), emote=self.emote)
+                sock=socket.socket()
+            )
             self._connect(self.sockets[self.channel].sock, self.channel)
         else:
-            self.sockets[channel] = types.SimpleNamespace(
-                sock=socket.socket(),
-                emote=self.emote if emote is None else emote)
+            self.sockets[channel] = types.SimpleNamespace(sock=socket.socket())
             self._connect(self.sockets[channel].sock, channel)
             LOG.debug(channel)
 
@@ -46,23 +44,24 @@ class Chat:
         if channel is None:
             channel = self.channel
         self.sockets[channel].sock.send(
-            ":{0}!{0}@{0}.tmi.twitch.tv PRIVMSG {1} : {2}\r\n".format(
-                self.conn.nick, channel,
-                f"{self.sockets[channel].emote} {message}").encode("utf-8"))
+            ":{0}!{0}@{0}.tmi.twitch.tv PRIVMSG {1} :{2}\r\n".format(
+                self.conn.nick, channel, message
+            ).encode("utf-8")
+        )
 
     def set_config(self, config):
         try:
-            self.conn = Connection(config["host"], int(config["port"]),
-                                   config["nick"], config["pass"])
+            self.conn = Connection(
+                config["host"],
+                int(config["port"]),
+                config["nick"],
+                config["pass"],
+            )
             self.channel = config["chan"]
-            self.emote = config["emote"]
             self.is_loaded = True
         except (KeyError, ValueError):
             LOG.error("Config not loaded! Check config file and reboot bot.")
             self.is_loaded = False
-
-    def set_emote(self, channel, emote):
-        self.sockets[channel].emote = emote
 
     def is_bot(self, username):
         return username.lower() == self.conn.nick.lower()
@@ -83,16 +82,40 @@ class Chat:
         try:
             response = self.sockets[channel].sock.recv(1024).decode("utf-8")
             if response == "PING :tmi.twitch.tv\r\n":
-                self.sockets[channel].sock.send("PONG :tmi.twitch.tv"
-                                                "\r\n".encode("utf-8"))
+                self.sockets[channel].sock.send(
+                    "PONG :tmi.twitch.tv\r\n".encode("utf-8")
+                )
                 LOG.info("Pong sent")
                 return
             username = re.search(r"\w+", response).group(0)
             if self.is_bot(username):
                 return
             message = self.CHAT_MSG.sub("", response)
-            LOG.info("USER: %s%s : %s", username, channel, message)
+            LOG.debug("USER: %s%s : %s", username, channel, message)
             self.bot.process_message(username, channel, message)
+        except (BlockingIOError, AttributeError, UnicodeDecodeError):
+            pass
+        finally:
+            time.sleep(1 / self.RATE)
+
+class WriteOnlyConn(Chat):
+    def _connect(self, sock, chan):
+        sock.connect((self.conn.host, self.conn.port))
+        sock.send(f"PASS {self.conn.passwd}\r\n".encode("utf-8"))
+        sock.send(f"NICK {self.conn.nick}\r\n".encode("utf-8"))
+        sock.send(f"JOIN {chan}\r\n".encode("utf-8"))
+        time.sleep(1)
+        sock.setblocking(0)
+
+    def _scan(self, channel):
+        try:
+            response = self.sockets[channel].sock.recv(1024).decode("utf-8")
+            if response == "PING :tmi.twitch.tv\r\n":
+                self.sockets[channel].sock.send(
+                    "PONG :tmi.twitch.tv\r\n".encode("utf-8")
+                )
+                LOG.info("Pong sent")
+                return
         except (BlockingIOError, AttributeError, UnicodeDecodeError):
             pass
         finally:
