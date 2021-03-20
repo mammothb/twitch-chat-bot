@@ -33,6 +33,13 @@ class Chat:
             self._connect(self.sockets[channel].sock, channel)
             LOG.debug(channel)
 
+    def disconnect(self, channel):
+        if channel in self.sockets:
+            self._disconnect(self.sockets[channel].sock, channel)
+            del self.sockets[channel]
+            LOG.debug(channel)
+            print(self.sockets)
+
     def scanloop(self):
         """Loops through all the sockets we have and scan for response
         while respecting the rate limit
@@ -78,6 +85,10 @@ class Chat:
         time.sleep(1)
         sock.setblocking(0)
 
+    def _disconnect(self, sock, chan):
+        sock.send(f"PART {chan}\r\n".encode("utf-8"))
+        time.sleep(1)
+
     def _scan(self, channel):
         try:
             response = self.sockets[channel].sock.recv(1024).decode("utf-8")
@@ -93,7 +104,7 @@ class Chat:
             message = self.CHAT_MSG.sub("", response)
             LOG.debug("USER: %s%s : %s", username, channel, message)
             self.bot.process_message(username, channel, message)
-        except (BlockingIOError, AttributeError, UnicodeDecodeError):
+        except (AttributeError, BlockingIOError, KeyError, UnicodeDecodeError):
             pass
         finally:
             time.sleep(1 / self.RATE)

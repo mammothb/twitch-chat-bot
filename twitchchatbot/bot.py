@@ -13,7 +13,7 @@ CONFIG_PATH = "config.ini"
 LOG = logging.getLogger("Bot")
 
 class Bot:
-    COMMANDS = ["color", "echo", "join", "search", "stop"]
+    COMMANDS = ["color", "echo", "join", "leave", "search", "stop"]
     NAME = "Bot"
     VERSION = "0.1.0"
 
@@ -81,6 +81,9 @@ class Bot:
             elif command == "join":
                 self.chat.connect(f"#{split_message[1]}")
                 self.writer.connect(f"#{split_message[1]}")
+            elif command == "leave":
+                self.chat.disconnect(f"#{split_message[1]}")
+                self.writer.disconnect(f"#{split_message[1]}")
             elif command == "search":
                 self._send_msg(search.googleimg(" ".join(split_message[1 :])),
                                channel)
